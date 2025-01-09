@@ -1,3 +1,4 @@
+import aiofiles
 import logging
 import yaml
 import json
@@ -90,100 +91,66 @@ yaml.add_representer(collections.OrderedDict, Representer.represent_dict)
 
 @callback
 @websocket_api.websocket_command({vol.Required("type"): "dwains_dashboard/configuration/get"})
-def websocket_get_configuration(
+async def websocket_get_configuration(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: Mapping[str, Any],
 ) -> None:
     """Return a list of configuration."""
-    if os.path.exists(hass.config.path("dwains-dashboard/configs/areas.yaml")):
-        with open(hass.config.path("dwains-dashboard/configs/areas.yaml")) as f:
-            areas = yaml.safe_load(f)
-    else:
-        areas = OrderedDict()
+    async def load_yaml_file(path):
+        """Load YAML file asynchronously."""
+        if os.path.exists(path):
+            async with aiofiles.open(path, mode="r") as f:
+                return yaml.safe_load(await f.read())
+        return OrderedDict()
 
-    if os.path.exists(hass.config.path("dwains-dashboard/configs/entities.yaml")):
-        with open(hass.config.path("dwains-dashboard/configs/entities.yaml")) as f:
-            entities = yaml.safe_load(f)
-    else:
-        entities = OrderedDict()
+    areas = await load_yaml_file(hass.config.path("dwains-dashboard/configs/areas.yaml"))
+    entities = await load_yaml_file(hass.config.path("dwains-dashboard/configs/entities.yaml"))
+    devices = await load_yaml_file(hass.config.path("dwains-dashboard/configs/devices.yaml"))
+    homepage_header = await load_yaml_file(hass.config.path("dwains-dashboard/configs/settings.yaml"))
 
-    if os.path.exists(hass.config.path("dwains-dashboard/configs/devices.yaml")):
-        with open(hass.config.path("dwains-dashboard/configs/devices.yaml")) as f:
-            devices = yaml.safe_load(f)
-    else:
-        devices = OrderedDict()
+    async def load_cards(directory):
+        """Load YAML cards asynchronously."""
+        cards = {}
+        if os.path.isdir(directory):
+            for subdir in os.listdir(directory):
+                cards[subdir] = {}
+                for fname in sorted(os.listdir(os.path.join(directory, subdir))):
+                    if fname.endswith('.yaml'):
+                        file_path = os.path.join(directory, subdir, fname)
+                        cards[subdir][fname] = await load_yaml_file(file_path)
+        return cards
 
-    if os.path.exists(hass.config.path("dwains-dashboard/configs/settings.yaml")):
-        with open(hass.config.path("dwains-dashboard/configs/settings.yaml")) as f:
-            homepage_header = yaml.safe_load(f)
-    else:
-        homepage_header = OrderedDict()
+    area_cards = await load_cards(hass.config.path("dwains-dashboard/configs/cards/areas"))
+    device_cards = await load_cards(hass.config.path("dwains-dashboard/configs/cards/devices"))
 
-    area_cards = {}
-    if os.path.isdir(hass.config.path("dwains-dashboard/configs/cards/areas")):
-        for subdir in os.listdir(hass.config.path("dwains-dashboard/configs/cards/areas")):
-            #_LOGGER.warning(subdir) #Subdir name
-            area_cards[subdir] = {}
-            for fname in sorted(os.listdir(hass.config.path("dwains-dashboard/configs/cards/areas/"+subdir))):
+    async def load_entity_cards(directory):
+        """Load entity cards asynchronously."""
+        cards = {}
+        if os.path.isdir(directory):
+            for fname in os.listdir(directory):
                 if fname.endswith('.yaml'):
-                    #_LOGGER.warning(fname) #Card filename
-                    with open(hass.config.path("dwains-dashboard/configs/cards/areas/"+subdir+"/"+fname)) as f:
-                        filecontent = yaml.safe_load(f)
-                        area_cards[subdir].update({fname: filecontent})
+                    file_path = os.path.join(directory, fname)
+                    cards[fname.replace(".yaml", "")] = await load_yaml_file(file_path)
+        return cards
 
-    device_cards = {}
-    if os.path.isdir(hass.config.path("dwains-dashboard/configs/cards/devices")):
-        for subdir in os.listdir(hass.config.path("dwains-dashboard/configs/cards/devices")):
-            #_LOGGER.warning(subdir) #Subdir name
-            device_cards[subdir] = {}
-            for fname in os.listdir(hass.config.path("dwains-dashboard/configs/cards/devices/"+subdir)):
-                if fname.endswith('.yaml'):
-                    #_LOGGER.warning(fname) #Card filename
-                    with open(hass.config.path("dwains-dashboard/configs/cards/devices/"+subdir+"/"+fname)) as f:
-                        filecontent = yaml.safe_load(f)
-                        device_cards[subdir].update({fname: filecontent})
+    entity_cards = await load_entity_cards(hass.config.path("dwains-dashboard/configs/cards/entities"))
+    entities_popup = await load_entity_cards(hass.config.path("dwains-dashboard/configs/cards/entities_popup"))
+    devices_card = await load_entity_cards(hass.config.path("dwains-dashboard/configs/cards/devices_card"))
+    devices_popup = await load_entity_cards(hass.config.path("dwains-dashboard/configs/cards/devices_popup"))
 
+    async def load_more_pages(directory):
+        """Load more pages asynchronously."""
+        pages = {}
+        if os.path.isdir(directory):
+            for subdir in os.listdir(directory):
+                config_path = os.path.join(directory, subdir, "config.yaml")
+                page_path = os.path.join(directory, subdir, "page.yaml")
+                if os.path.exists(config_path) and os.path.exists(page_path):
+                    pages[subdir] = await load_yaml_file(config_path)
+        return pages
 
-    entity_cards = {}
-    if os.path.isdir(hass.config.path("dwains-dashboard/configs/cards/entities")):
-        for fname in os.listdir(hass.config.path("dwains-dashboard/configs/cards/entities")):
-            if fname.endswith('.yaml'):
-                with open(hass.config.path("dwains-dashboard/configs/cards/entities/"+fname)) as f:
-                    filecontent = yaml.safe_load(f)
-                    entity_cards.update({fname.replace(".yaml",""): filecontent})
-
-    entities_popup = {}
-    if os.path.isdir(hass.config.path("dwains-dashboard/configs/cards/entities_popup")):
-        for fname in os.listdir(hass.config.path("dwains-dashboard/configs/cards/entities_popup")):
-            if fname.endswith('.yaml'):
-                with open(hass.config.path("dwains-dashboard/configs/cards/entities_popup/"+fname)) as f:
-                    filecontent = yaml.safe_load(f)
-                    entities_popup.update({fname.replace(".yaml",""): filecontent})
-    
-    devices_card = {}
-    if os.path.isdir(hass.config.path("dwains-dashboard/configs/cards/devices_card")):
-        for fname in os.listdir(hass.config.path("dwains-dashboard/configs/cards/devices_card")):
-            if fname.endswith('.yaml'):
-                with open(hass.config.path("dwains-dashboard/configs/cards/devices_card/"+fname)) as f:
-                    filecontent = yaml.safe_load(f)
-                    devices_card.update({fname.replace(".yaml",""): filecontent})
-
-    devices_popup = {}
-    if os.path.isdir(hass.config.path("dwains-dashboard/configs/cards/devices_popup")):
-        for fname in os.listdir(hass.config.path("dwains-dashboard/configs/cards/devices_popup")):
-            if fname.endswith('.yaml'):
-                with open(hass.config.path("dwains-dashboard/configs/cards/devices_popup/"+fname)) as f:
-                    filecontent = yaml.safe_load(f)
-                    devices_popup.update({fname.replace(".yaml",""): filecontent})
-
-    more_pages = {}
-    if os.path.isdir(hass.config.path("dwains-dashboard/configs/more_pages")):
-        for subdir in os.listdir(hass.config.path("dwains-dashboard/configs/more_pages")):
-            if (os.path.exists(hass.config.path("dwains-dashboard/configs/more_pages/"+subdir+"/page.yaml"))) and (os.path.exists(hass.config.path("dwains-dashboard/configs/more_pages/"+subdir+"/config.yaml"))):
-                with open(hass.config.path("dwains-dashboard/configs/more_pages/"+subdir+"/config.yaml")) as f:
-                    filecontent = yaml.safe_load(f)
-                    more_pages[subdir] = filecontent
+    more_pages = await load_more_pages(hass.config.path("dwains-dashboard/configs/more_pages"))
 
     #_LOGGER.warning(cards)
 
